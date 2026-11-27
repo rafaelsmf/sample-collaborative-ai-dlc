@@ -6,13 +6,14 @@ import type { Question } from '@/services/questions';
 
 const setSelection = vi.fn();
 const access = vi.hoisted(() => ({ readOnly: false }));
+const answer = vi.hoisted(() => ({ selections: new Map<number, number[]>() }));
 vi.mock('@/contexts/SpacePermissionsContext', () => ({
   useSpacePermissions: () => access,
 }));
 
 vi.mock('@/hooks/useCollaborativeStructuredAnswer', () => ({
   useCollaborativeStructuredAnswer: () => ({
-    selections: new Map(),
+    selections: answer.selections,
     freeTexts: new Map(),
     setSelection,
     setFreeText: vi.fn(),
@@ -57,6 +58,7 @@ describe('QuestionEditor references', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     access.readOnly = false;
+    answer.selections.clear();
   });
 
   it('keeps questions readable while denying selection and submission for a Viewer', () => {
@@ -75,6 +77,28 @@ describe('QuestionEditor references', () => {
     expect(setSelection).not.toHaveBeenCalled();
     for (const button of screen.getAllByRole('button')) expect(button).toBeDisabled();
     expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it('marks the chosen answer with a strong border and a theme-aware indicator', () => {
+    answer.selections.set(0, [1]);
+    render(
+      <QuestionEditor
+        question={question}
+        scope={{ kind: 'intent', id: 'i', projectId: 'p' }}
+        userName="u"
+        onAnswer={vi.fn()}
+      />,
+    );
+    const chosen = screen.getByText('Use server sessions').closest('label');
+    const other = screen.getByText(/Keep tokens/).closest('label');
+    // A 2 px border is the cue that survives forced colours; the tint alone was
+    // below 3:1 on a white card.
+    expect(chosen).toHaveClass('border-2', 'border-primary');
+    expect(other).not.toHaveClass('border-primary');
+    // The dot must follow the theme: white on the white dark-theme primary vanished.
+    const dot = chosen!.querySelector('.rounded-full .rounded-full');
+    expect(dot).toHaveClass('bg-primary-foreground');
+    expect(dot).not.toHaveClass('bg-white');
   });
 
   it('keeps question and option text unlinked without references', () => {
