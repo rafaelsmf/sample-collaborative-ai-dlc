@@ -535,6 +535,19 @@ engine command families and lines, the `dist/<harness>/` directories the commit
 ships and the release assets. It ends with the profile entry, including the
 source digest, and the onboarding checklist.
 
+The `AI-DLC Release Watch` workflow runs the check every Monday, and on demand
+with an optional tag, only in the upstream repository. Its check job reads
+upstream data with a read-only token; its publish job fetches nothing, posts
+only a report it validates (title rebuilt from the tag, size capped) and is the
+only one that can write issues. It opens one issue per release and commit,
+labelled `area/ci`, `topic/workflows` and `status/needs-triage` (and
+`nfr/security` when integrity fails), refreshes the issue while it is open, and
+leaves it alone once a maintainer closes it, unless integrity newly fails for
+the same commit, which reopens it. A commit that is already supported opens
+nothing, and a run that cannot read GitHub or codeload fails without opening
+anything. To retry, re-run the whole workflow. GitHub disables scheduled
+workflows after 60 days without repository activity.
+
 ## Registry, promotion, and channels
 
 Registration creates an invisible, structurally-valid record. It does not make
