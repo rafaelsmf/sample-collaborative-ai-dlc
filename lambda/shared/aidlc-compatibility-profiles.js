@@ -5,11 +5,15 @@ const OFFICIAL_AIDLC_REPOSITORY = 'awslabs/aidlc-workflows';
 
 // Exact source commits are the compatibility identity. Tags and human-readable
 // versions are labels only and must never be followed dynamically.
+// `sourceDigest` (see aidlc-source-integrity.js) names the `core/` tree the
+// fixture was certified from. Existing entries are a compatibility contract:
+// a newer AI-DLC version is added as a new entry, never by editing one.
 const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
   'current-stable': Object.freeze({
     id: 'current-stable',
     releaseId: 'aidlc:83ed7a812c4024904f2c5e4d744e28077e0a5acd',
     fixtureDigest: '7651ff897327b3d92fdea033e52f724686aeb274d144de50dbe034ef53180825',
+    sourceDigest: '12d7f0bdb4e6a8b5afabea6499f899598e236aa82f63c6f2949ef0c597ad1ee1',
     label: 'Collaborative stable',
     upstreamVersion: '2.3.3',
     upstreamRef: '83ed7a812c4024904f2c5e4d744e28077e0a5acd',
@@ -23,6 +27,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.6.18',
     releaseId: 'aidlc:fbb1460c5225657dac7f5a025657785751b41634',
     fixtureDigest: '78481064fda5ed0a6a1a5736182a22d187bb1c29d7b19cbc8715ed433e994e0c',
+    sourceDigest: 'ada4d7e20635cff9c03421991fa925caf893d72705100774242550cd62b131e3',
     label: 'AI-DLC 2.6.18',
     upstreamVersion: '2.6.18',
     upstreamRef: 'fbb1460c5225657dac7f5a025657785751b41634',
@@ -36,6 +41,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.7.0',
     releaseId: 'aidlc:96b11d39028955d4f92375e783525db5275cdfd8',
     fixtureDigest: 'ab4d05e351a618c3d1af8fa36a39c1c4367349db3f395d6cf079c688d594a186',
+    sourceDigest: '8b6bba92025a5e79b3c69297ad65fab3f4356577573197985a42f3b437c51a65',
     label: 'AI-DLC 2.7.0',
     upstreamVersion: '2.7.0',
     upstreamRef: '96b11d39028955d4f92375e783525db5275cdfd8',
@@ -49,6 +55,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.8.2',
     releaseId: 'aidlc:355903d6dc8eb07d3c77180be5d40ed679d6a40f',
     fixtureDigest: '1f6cb7a38493e5640e9686d67670418697b374b3684c0cace745b3d42fe1a19e',
+    sourceDigest: '41946e393b7ebb4d4b0a48a6e646cdda549a7902cd61e85cd86a9afe10acfa78',
     label: 'AI-DLC 2.8.2',
     upstreamVersion: '2.8.2',
     upstreamRef: '355903d6dc8eb07d3c77180be5d40ed679d6a40f',
@@ -62,6 +69,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.9.0',
     releaseId: 'aidlc:22f5d1b15a064c9ae80046e5b1761d5877e2f69f',
     fixtureDigest: '0f226dae0bb9ad453ecb1f955306883e81a2c930864edc9c572940e6ec783641',
+    sourceDigest: '27524ac24fdcccdbb1c539e3687798857ed2574e01fb122bce71082a2d1c8871',
     label: 'AI-DLC 2.9.0',
     upstreamVersion: '2.9.0',
     upstreamRef: '22f5d1b15a064c9ae80046e5b1761d5877e2f69f',
@@ -83,6 +91,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.11.0',
     releaseId: 'aidlc:6a378b53c0a4fe0641ed7d8de8dfff94264d5b6a',
     fixtureDigest: '4a77093efb88810b0b4f93dde19c8cb9afe0c2c0955d3946dd1160592f0dc60b',
+    sourceDigest: '0dc3c41947b543a85b09ce7962468fd9d602dcc34f89150772ca48ddcef73091',
     label: 'AI-DLC 2.11.0',
     upstreamVersion: '2.11.0',
     upstreamRef: '6a378b53c0a4fe0641ed7d8de8dfff94264d5b6a',
@@ -102,6 +111,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.11.1',
     releaseId: 'aidlc:895a35d86d20336d9b7bc4aedc9440e4a12c83ab',
     fixtureDigest: '68120a5f56138a4c6ffb09bb5be8748f2f4598687ab92b1e21b0eaef39d7087b',
+    sourceDigest: 'c5ae5687005a8e9e01318765194d34918d99ad6035c173989ca38d9588dca0a3',
     label: 'AI-DLC 2.11.1',
     upstreamVersion: '2.11.1',
     upstreamRef: '895a35d86d20336d9b7bc4aedc9440e4a12c83ab',
@@ -120,6 +130,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.11.3',
     releaseId: 'aidlc:63fd2901947ece8c5ad0cd831cdf5934a9666d47',
     fixtureDigest: '59636c597c6d96505ca89f94a6c76a9a24d2be48946d7c89b7a37febfb10366a',
+    sourceDigest: '42874a75bb3af1401b0d25f273e2aa28edac706fdf6c6e657260ae68b0969131',
     label: 'AI-DLC 2.11.3',
     upstreamVersion: '2.11.3',
     upstreamRef: '63fd2901947ece8c5ad0cd831cdf5934a9666d47',
@@ -136,6 +147,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.11.4',
     releaseId: 'aidlc:61fdb122428d86b56b7e8d598787095f2c97d3e1',
     fixtureDigest: 'a4e5a65596d45e6d2205e0737e5bd24f8785da0022a2f3ff69c1ce3cfb89181c',
+    sourceDigest: 'f7370f52b54e07911cc66cc54105190df37dbaa564d5671f32fccba1a87d62ad',
     label: 'AI-DLC 2.11.4',
     upstreamVersion: '2.11.4',
     upstreamRef: '61fdb122428d86b56b7e8d598787095f2c97d3e1',
@@ -152,6 +164,7 @@ const AIDLC_COMPATIBILITY_PROFILES = Object.freeze({
     id: 'v2.11.5',
     releaseId: 'aidlc:30d674ed196c7051222130ce344bf513c82eff2b',
     fixtureDigest: '869bcb164c0b6e3683106e488529db6bface354cff3dfb68231ad13811fce9ab',
+    sourceDigest: '9815aba506b4bc1fdfe2d980dd92933c7f9deaf74d9bff0d536cb38fd9140b78',
     label: 'AI-DLC 2.11.5',
     upstreamVersion: '2.11.5',
     upstreamRef: '30d674ed196c7051222130ce344bf513c82eff2b',
