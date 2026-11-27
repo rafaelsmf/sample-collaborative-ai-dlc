@@ -506,6 +506,23 @@ release registry, channels or a deployment, and a new version still needs a
 reviewed pull request that adds its profile. GitHub or codeload being
 unavailable fails the run without a report.
 
+A verified release is then qualified in memory, as an import of it would run
+in this build: nothing is published. It is compared with the real `core/` tree
+of the newest supported version, which must still match that version's source
+digest, and imported as the profile entry a maintainer would commit, in the
+newest version's dialect but without its per-version import normalizations
+(a release that still needs one is reported with a hint to add it). It is
+`ready` when it imports with no diagnostic, its release bundle builds and it
+has no certification gap the newest supported version does not already have;
+otherwise it `needs-work`. The qualification does not review what the
+release's runtime files do. The report compares the release with the newest
+supported version: block counts, every added, changed or removed `core/` file
+grouped by area, with runtime files (tools, hooks, protocols and the conductor,
+which run in the agent runtime once the version is approved) listed first,
+engine command families and lines, the `dist/<harness>/` directories the commit
+ships and the release assets. It ends with the profile entry, including the
+source digest, and the onboarding checklist.
+
 ## Registry, promotion, and channels
 
 Registration creates an invisible, structurally-valid record. It does not make
