@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { AIDLC_COMPATIBILITY_PROFILES } from '../lambda/shared/aidlc-compatibility-profiles.js';
+import { sourceDigestOfHashes } from '../lambda/shared/aidlc-source-integrity.js';
 import { fetchCoreFiles } from '../lambda/shared/repo-fetch.js';
 import { canonicalJson } from '../lambda/shared/workflow-checkpoint.js';
 
@@ -222,8 +223,9 @@ const main = async () => {
     const outputPath = path.join(FIXTURE_DIR, `${source.id}.json`);
     await writeFile(outputPath, `${JSON.stringify(sortKeys(fixture), null, 2)}\n`, 'utf8');
     const fixtureDigest = sha256(canonicalJson(fixture));
+    const sourceDigest = sourceDigestOfHashes(fixture.originalFileHashes);
     console.error(
-      `wrote ${outputPath}: ${Object.keys(fixture.files).length} importer files, ${fixture.runtimeFiles.length} runtime files, fixture digest ${fixtureDigest}`,
+      `wrote ${outputPath}: ${Object.keys(fixture.files).length} importer files, ${fixture.runtimeFiles.length} runtime files, fixture digest ${fixtureDigest}, source digest ${sourceDigest}`,
     );
   }
 };
