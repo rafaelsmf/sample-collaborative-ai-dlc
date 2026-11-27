@@ -10,13 +10,31 @@ const PREPARED = ['registered', 'already-registered', 'upgraded'];
 // The registry declined to move this version's record to the new closure, for
 // a reason an admin resolves; the closure is published and the record unchanged.
 const KEPT_ON_OLDER_CLOSURE = 'upgrade-refused';
+// The seed Lambda refused a version because the files it fetched are not the
+// ones this build certified. Nothing is published or registered for it; the
+// other versions are still prepared, and the deployment then fails.
+const SOURCE_MISMATCH = 'release_source_mismatch';
+const SOURCE_MISMATCH_EXIT_CODE = 3;
+
+// A function error's payload carries the Lambda's errorMessage, and release
+// errors start with their code, so the operator sees the reason here.
+const functionErrorMessage = (response) => {
+  try {
+    const message = JSON.parse(new TextDecoder().decode(response.Payload))?.errorMessage;
+    return typeof message === 'string' ? message.slice(0, 500) : null;
+  } catch {
+    return null;
+  }
+};
 
 export async function prepareSupportedReleases({
   invoke,
   onPrepared = () => {},
   onKept = () => {},
+  onMismatch = () => {},
 }) {
   const prepared = [];
+  const mismatched = [];
   for (const profile of Object.values(AIDLC_COMPATIBILITY_PROFILES)) {
     const response = await invoke({
       prepareRelease: true,
@@ -24,8 +42,14 @@ export async function prepareSupportedReleases({
       importerRevision: AIDLC_RELEASE_IMPORTER_REVISION,
     });
     if (response.FunctionError || response.StatusCode !== 200) {
+      const reason = response.FunctionError ? functionErrorMessage(response) : null;
+      if (reason?.startsWith(`${SOURCE_MISMATCH}:`)) {
+        mismatched.push(profile);
+        onMismatch(profile, reason);
+        continue;
+      }
       throw new Error(
-        `AI-DLC ${profile.upstreamVersion} preparation failed. Check the seed Lambda logs.`,
+        `AI-DLC ${profile.upstreamVersion} preparation failed${reason ? `: ${reason}` : ''}. Check the seed Lambda logs.`,
       );
     }
     let result;
@@ -52,6 +76,17 @@ export async function prepareSupportedReleases({
     if (result.registration === KEPT_ON_OLDER_CLOSURE) onKept(profile, result);
     else onPrepared(profile);
   }
+  if (mismatched.length > 0) {
+    throw Object.assign(
+      new Error(
+        `AI-DLC ${mismatched.map((profile) => profile.upstreamVersion).join(', ')} not prepared: ` +
+          'the files fetched from upstream are not the ones this build certified, so nothing ' +
+          'was published or registered for them. The other versions were prepared. Retrying ' +
+          'is safe; if it keeps failing, report it to the project maintainers.',
+      ),
+      { code: SOURCE_MISMATCH },
+    );
+  }
   return prepared;
 }
 
@@ -73,6 +108,8 @@ async function main() {
           { abortSignal: AbortSignal.timeout(330_000) },
         ),
       onPrepared: (profile) => console.log(`Prepared AI-DLC ${profile.upstreamVersion}.`),
+      onMismatch: (profile, reason) =>
+        console.error(`AI-DLC ${profile.upstreamVersion} refused by the source check: ${reason}`),
       onKept: (profile, result) =>
         console.warn(
           `AI-DLC ${profile.upstreamVersion} stays on importer revision ${result.registeredImporterRevision} (${result.upgradeRefusal}). Upgrade it from the admin AI-DLC releases tab.`,
@@ -86,6 +123,7 @@ async function main() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
     console.error(error.message);
-    process.exitCode = 1;
+    // deploy-terraform.sh tells a refused source apart from a failed preparation.
+    process.exitCode = error.code === SOURCE_MISMATCH ? SOURCE_MISMATCH_EXIT_CODE : 1;
   });
 }
