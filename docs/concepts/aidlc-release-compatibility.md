@@ -491,6 +491,29 @@ an `N/A` naming another Unit hands the ID to a Unit on the story's row. One
 | ------------------------------------------------------------------------------------------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The traceability sensor verifies those rules, and on a re-run of Units Generation reports a story whose Units are all finished | not reproduced | The sensor reads the stories, the story map and the Unit Progress table from a native project's intent record directory, which the platform's workspace does not keep, so these checks do not run, as with the 2.11.4 sensor. |
 
+## Watching for new upstream releases
+
+`scripts/aidlc-release-watch/check.mjs` lists the published, non-prerelease
+`awslabs/aidlc-workflows` releases whose plain `vX.Y.Z` tag is newer than every
+supported profile, and checks the source of each one before anyone onboards
+it. `--tag vX.Y.Z` checks one release instead, `--out <dir>` chooses where
+`aidlc-release-watch.json` is written, and `GITHUB_TOKEN`, when set, only
+raises the GitHub API rate limit.
+
+The checks are: the tag names a commit, directly or through an annotated tag;
+the codeload archive of that commit can be read; every `core/` file in it is
+the git blob the commit's tree lists through the GitHub API, with no file
+missing or added; and the tag still names the same commit at the end. A
+release that fails any of them is reported `integrity-failed`, one that passes
+`verified`, and a commit that is already a profile `already-supported`. The
+report also lists supported versions whose tag now names a commit with
+different `core/` content than the one their profile pins (2.11.3's tag names
+the promotion commit, whose `core/` tree is the pinned preview's, so it is not
+listed). The report is evidence for a maintainer: the script never changes code,
+the release registry, channels or a deployment, and a new version still needs
+a reviewed pull request that adds its profile. GitHub or codeload being
+unavailable fails the run without a report.
+
 ## Registry, promotion, and channels
 
 Registration creates an invisible, structurally-valid record. It does not make
