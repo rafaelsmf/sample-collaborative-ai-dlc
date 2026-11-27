@@ -1,5 +1,5 @@
 import { useSpacePermissions } from '@/contexts/SpacePermissionsContext';
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { cn } from '@/lib/utils';
 import { getTimeAgo } from '@/lib/timeAgo';
@@ -47,7 +47,12 @@ import {
 } from 'lucide-react';
 import { GitRepoLink } from '@/components/GitRepoLink';
 import { effectiveSprintStatus, isActiveStatus } from '@/lib/sprintStatus';
-import { intentsService, type Intent, type ProjectMetrics } from '@/services/intents';
+import {
+  intentsService,
+  type Intent,
+  type IntentListResult,
+  type ProjectMetrics,
+} from '@/services/intents';
 import { UsageMetrics } from '@/components/intent/UsageMetrics';
 import { loadPersisted, persist } from '@/lib/persistentCache';
 
@@ -113,7 +118,10 @@ export default function Project() {
   // v2 projects run intents (dynamic phases/stages), not the fixed sprint
   // lifecycle — render the dedicated intents view.
   if (project.kind === 'v2') {
-    return <IntentsView project={project} projectId={projectId} onNavigate={navigate} />;
+    // Keyed by Space: its list, cache seed and partial-read notice are per Space.
+    return (
+      <IntentsView key={projectId} project={project} projectId={projectId} onNavigate={navigate} />
+    );
   }
 
   return (
@@ -389,6 +397,10 @@ function IntentsView({
   const [intents, setIntents] = useState<Intent[]>(cached?.intents ?? []);
   const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
+  const [listTruncated, setListTruncated] = useState<IntentListResult['truncated']>(null);
+  // Only the latest refresh may write the list: an older one still paging
+  // would otherwise overwrite it.
+  const listLoad = useRef(0);
 
   const [usage, setUsage] = useState<ProjectMetrics | null>(cached?.usage ?? null);
   const [confirmDeleteIntent, setConfirmDeleteIntent] = useState<Intent | null>(null);
@@ -426,15 +438,31 @@ function IntentsView({
     });
   }, [intents, sortBy]);
 
-  const API_INTENT_CAP = 100;
   const INITIAL_INTENT_CAP = 10;
   const visibleIntents = showAll ? sortedIntents : sortedIntents.slice(0, INITIAL_INTENT_CAP);
   const hasMore = sortedIntents.length > INITIAL_INTENT_CAP;
 
   const refresh = useCallback(() => {
+    const load = ++listLoad.current;
+    // A list already on screen stays until the refresh finishes: showing the
+    // first page meanwhile would shrink it.
+    const shown = intentsCache.has(projectId);
+    const showPage = (partial: Intent[]) => {
+      if (load !== listLoad.current) return;
+      setIntents(partial);
+      setLoading(false);
+    };
     intentsService
-      .list(projectId)
-      .then((data) => {
+      .listAll(projectId, shown ? undefined : showPage)
+      .then(({ intents: data, truncated }) => {
+        if (load !== listLoad.current) return;
+        setListTruncated(truncated);
+        // A partial read is shown (unless a full list is already on screen)
+        // but never cached, so it does not replace a complete list later.
+        if (truncated === 'error') {
+          if (!shown) setIntents(data);
+          return;
+        }
         setIntents(data);
         const entry: IntentsCacheEntry = {
           intents: data,
@@ -447,7 +475,10 @@ function IntentsView({
           fetchedAt: entry.fetchedAt,
         });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load intents'))
+      .catch((e) => {
+        if (load === listLoad.current)
+          setError(e instanceof Error ? e.message : 'Failed to load intents');
+      })
       .finally(() => setLoading(false));
     intentsService
       .projectMetrics(projectId)
@@ -687,12 +718,14 @@ function IntentsView({
                     : `Show all loaded (${sortedIntents.length})`}
                 </button>
               )}
-              {intents.length >= API_INTENT_CAP && (
+              {listTruncated && (
                 <p
                   className="text-center text-[11px] text-muted-foreground/70 pt-1"
-                  data-testid="intent-api-cap-notice"
+                  data-testid="intent-list-partial-notice"
                 >
-                  Up to {API_INTENT_CAP} most recent Intents are loaded in this view.
+                  {listTruncated === 'cap'
+                    ? `Showing the first ${intents.length} Intents of this Space.`
+                    : `Showing ${intents.length} Intents. The full list could not be loaded; refresh to try again.`}
                 </p>
               )}
             </>
