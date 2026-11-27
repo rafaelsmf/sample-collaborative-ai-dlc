@@ -20,6 +20,7 @@ import {
   customProfile,
 } from '../../shared/aidlc-compatibility-profiles.js';
 import { fetchCoreFiles, fetchRepoFiles } from '../../shared/repo-fetch.js';
+import { assertOfficialSource } from '../../shared/aidlc-source-integrity.js';
 import { MAX_DISTRIBUTION_BYTES } from '../../shared/distribution-archive.js';
 import { AIDLC_RELEASE_IMPORTER_REVISION } from '../../shared/aidlc-release.js';
 import { loadWorkflowComposition } from '../../shared/v2-workflow-plan.js';
@@ -74,6 +75,20 @@ vi.mock('../../shared/release-registry.js', async (importOriginal) => ({
   getRelease: getReleaseMock,
   upgradeReleaseClosure: upgradeReleaseClosureMock,
 }));
+
+// The seed tests serve redacted fixture text, which never matches an official
+// profile's certified source, so the source check passes unless a test turns
+// the real one on.
+const sourceCheck = vi.hoisted(() => ({ real: false }));
+vi.mock('../../shared/aidlc-source-integrity.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    assertOfficialSource: vi.fn((input) =>
+      sourceCheck.real ? actual.assertOfficialSource(input) : null,
+    ),
+  };
+});
 
 const RELEASE_PROFILE = 'current-stable';
 const releaseFiles = (profileId = RELEASE_PROFILE) =>
@@ -202,6 +217,8 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  sourceCheck.real = false;
+  assertOfficialSource.mockClear();
   getReleaseMock.mockReset().mockResolvedValue(null);
   upgradeReleaseClosureMock.mockReset().mockResolvedValue({ status: 'upgraded' });
   registerReleaseMock.mockReset().mockImplementation(async ({ profileId }) => ({
@@ -612,6 +629,62 @@ describe('seed-blocks importRelease mode', () => {
     ).rejects.toThrow(/cannot be combined with reseed/);
     expect(s3Store.size).toBe(0);
     expect(ddbMock.calls()).toHaveLength(0);
+  });
+});
+
+describe('seed-blocks official source check', () => {
+  const profile = AIDLC_COMPATIBILITY_PROFILES[RELEASE_PROFILE];
+
+  beforeEach(() => {
+    fetchCoreFiles.mockImplementation(async () => releaseFiles());
+    forkDist.files = new Map();
+  });
+
+  it('checks an official release against the very files it fetched', async () => {
+    const files = releaseFiles();
+    fetchCoreFiles.mockImplementation(async () => files);
+    await handler({ importRelease: true, profile: RELEASE_PROFILE, dryRun: true });
+    expect(assertOfficialSource).toHaveBeenCalledWith({ profile, files });
+  });
+
+  it.each([true, false])(
+    'refuses an official release whose files are not the certified source (dry run %s)',
+    async (dryRun) => {
+      sourceCheck.real = true;
+      await expect(
+        handler({ importRelease: true, profile: RELEASE_PROFILE, dryRun }),
+      ).rejects.toMatchObject({
+        code: 'release_source_mismatch',
+        message: expect.stringMatching(/^release_source_mismatch: AI-DLC 2\.3\.3 at 83ed7a812c40 /),
+      });
+      expect(s3Store.size).toBe(0);
+      expect(tableStore.size).toBe(0);
+    },
+  );
+
+  it('neither publishes nor registers a mismatched release during deployment', async () => {
+    sourceCheck.real = true;
+    await expect(handler({ prepareRelease: true, profile: profile.id })).rejects.toMatchObject({
+      code: 'release_source_mismatch',
+    });
+    expect(s3Store.size).toBe(0);
+    expect(registerReleaseMock).not.toHaveBeenCalled();
+    expect(upgradeReleaseClosureMock).not.toHaveBeenCalled();
+  });
+
+  it('does not hold a custom fork to an official source', async () => {
+    sourceCheck.real = true;
+    const result = await handler({
+      importRelease: true,
+      custom: {
+        repository: 'acme/aidlc-fork',
+        sha: '0123456789abcdef0123456789abcdef01234567',
+        baseProfile: RELEASE_PROFILE,
+      },
+      dryRun: true,
+    });
+    expect(result).toMatchObject({ status: 'dry-run', custom: true });
+    expect(assertOfficialSource).not.toHaveBeenCalled();
   });
 });
 

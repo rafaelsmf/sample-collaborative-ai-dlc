@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { gzipSync } from 'node:zlib';
+import tar from 'tar-stream';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AIDLC_COMPATIBILITY_PROFILES } from '../aidlc-compatibility-profiles.js';
 import {
+  assertOfficialSource,
   sourceDigestOf,
   sourceDigestOfHashes,
   sourceFileHashes,
 } from '../aidlc-source-integrity.js';
+import { fetchCoreFiles } from '../repo-fetch.js';
 import { canonicalJson } from '../workflow-checkpoint.js';
 
 const fixtureFor = (profileId) =>
@@ -108,5 +112,87 @@ describe('official profile allowlist', () => {
         currentPlatformBaseline: false,
       });
     }
+  });
+});
+
+describe('assertOfficialSource', () => {
+  const files = new Map([['core/aidlc-common/stages/a.md', 'secret body text\n']]);
+  const official = (over = {}) => ({
+    id: 'v9.9.9',
+    upstreamVersion: '9.9.9',
+    upstreamRef: 'f'.repeat(40),
+    sourceDigest: sourceDigestOf(files),
+    ...over,
+  });
+
+  it('accepts the certified tree and returns its digest', () => {
+    expect(assertOfficialSource({ profile: official(), files })).toBe(sourceDigestOf(files));
+  });
+
+  it('refuses any other tree, naming the version and digests but no content', () => {
+    const changed = new Map([['core/aidlc-common/stages/a.md', 'secret body text!\n']]);
+    let error;
+    try {
+      assertOfficialSource({ profile: official(), files: changed });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ name: 'AidlcReleaseError', code: 'release_source_mismatch' });
+    expect(error.message).toBe(
+      `release_source_mismatch: AI-DLC 9.9.9 at ffffffffffff fetched 1 core/ files whose source digest ${sourceDigestOf(changed).slice(0, 12)} is not the certified ${sourceDigestOf(files).slice(0, 12)}`,
+    );
+    expect(error.message).not.toContain('secret');
+  });
+
+  it('fails closed for an official profile that records no source digest', () => {
+    expect(() =>
+      assertOfficialSource({ profile: official({ sourceDigest: undefined }), files }),
+    ).toThrow(/is not the certified \(none recorded\)$/);
+  });
+
+  it('does not check a custom fork, which has no certified source', () => {
+    expect(
+      assertOfficialSource({ profile: official({ custom: true, sourceDigest: undefined }), files }),
+    ).toBeNull();
+  });
+});
+
+describe('source digest of what the import fetches', () => {
+  const tarball = async (files) => {
+    const pack = tar.pack();
+    for (const [name, content] of Object.entries(files)) {
+      pack.entry({ name: `aidlc-workflows-${'a'.repeat(40)}/${name}` }, content);
+    }
+    pack.finalize();
+    const chunks = [];
+    for await (const chunk of pack) chunks.push(chunk);
+    return gzipSync(Buffer.concat(chunks));
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Every official sourceDigest was recorded from fetchCoreFiles output. If the
+  // fetch changes which files it keeps or how it decodes them, every digest
+  // changes and every deployment would refuse every release: this pins it.
+  it('is stable for the files fetchCoreFiles returns', async () => {
+    const archive = await tarball({
+      'core/aidlc-common/stages/a.md': 'café\r\nline\n',
+      'core/tools/b.ts': 'export const b = 1;\n',
+      'README.md': 'not core\n',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        arrayBuffer: async () => archive,
+      })),
+    );
+    const files = await fetchCoreFiles('a'.repeat(40));
+    expect([...files.keys()]).toEqual(['core/aidlc-common/stages/a.md', 'core/tools/b.ts']);
+    expect(sourceDigestOf(files)).toBe(
+      'e488ab9b09d6d513e45138d145257b303486522a0510c34647076d0f4c728610',
+    );
   });
 });
