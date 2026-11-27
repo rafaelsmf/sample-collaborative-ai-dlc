@@ -10,14 +10,18 @@ vi.mock('@/hooks/useProjectsCache', () => ({
   useProjectsCache: () => ({ invalidate: () => {} }),
 }));
 vi.mock('@/hooks/useSprintEvents', () => ({ useSprintEvents: () => {} }));
-const list = vi.fn().mockResolvedValue([]);
+const listAll = vi.fn();
+const loaded = (intents: unknown[], truncated: 'cap' | 'error' | null = null) => ({
+  intents,
+  truncated,
+});
 const projectMetrics = vi.fn().mockResolvedValue({
   perIntent: [],
   project: { metrics: {}, cost: { totalCost: 0, currency: 'USD', anyUnpriced: false } },
 });
 vi.mock('@/services/intents', () => ({
   intentsService: {
-    list: (...a: unknown[]) => list(...a),
+    listAll: (...a: unknown[]) => listAll(...a),
     projectMetrics: (...a: unknown[]) => projectMetrics(...a),
   },
 }));
@@ -52,7 +56,7 @@ const renderProject = () =>
 describe('Project page — v2 routing', () => {
   beforeEach(() => {
     useProjectCache.mockReset();
-    list.mockReset().mockResolvedValue([]);
+    listAll.mockReset().mockResolvedValue(loaded([]));
     clearIntentsCacheForTests();
   });
 
@@ -62,7 +66,7 @@ describe('Project page — v2 routing', () => {
     expect(await screen.findByText('New Intent')).toBeInTheDocument();
     expect(screen.getByText('No intents yet')).toBeInTheDocument();
     expect(screen.queryByText('New Sprint')).not.toBeInTheDocument();
-    expect(list).toHaveBeenCalledWith('p1');
+    expect(listAll).toHaveBeenCalledWith('p1', expect.any(Function));
   });
 
   it('navigates to /space/:projectId/intent/new when New Intent is clicked', async () => {
@@ -92,7 +96,7 @@ describe('Project page — v2 routing', () => {
 describe('Project page — Intent list scalability', () => {
   beforeEach(() => {
     useProjectCache.mockReset();
-    list.mockReset();
+    listAll.mockReset();
     projectMetrics.mockReset().mockResolvedValue({
       perIntent: [],
       project: { metrics: {}, cost: { totalCost: 0, currency: 'USD', anyUnpriced: false } },
@@ -113,7 +117,7 @@ describe('Project page — Intent list scalability', () => {
 
   it('shows at most 10 intents initially and a "Show all" toggle', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(15));
+    listAll.mockResolvedValue(loaded(makeIntents(15)));
     renderProject();
     await screen.findByText('Intent 0');
     const rows = screen.getAllByRole('button', { name: /^Intent \d+/ });
@@ -123,7 +127,7 @@ describe('Project page — Intent list scalability', () => {
 
   it('does not show a "loaded" count badge next to the Intents heading', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(15));
+    listAll.mockResolvedValue(loaded(makeIntents(15)));
     renderProject();
     await screen.findByText('Intent 0');
     expect(screen.queryByText(/^\d+ loaded$/)).not.toBeInTheDocument();
@@ -131,7 +135,7 @@ describe('Project page — Intent list scalability', () => {
 
   it('"Show all" reveals all intents, then "Show recent" hides them', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(12));
+    listAll.mockResolvedValue(loaded(makeIntents(12)));
     renderProject();
     await screen.findByText('Intent 0');
     await userEvent.click(screen.getByTestId('intent-show-toggle'));
@@ -143,35 +147,66 @@ describe('Project page — Intent list scalability', () => {
 
   it('does not show the toggle when there are 10 or fewer intents', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(8));
+    listAll.mockResolvedValue(loaded(makeIntents(8)));
     renderProject();
     await screen.findByText('Intent 0');
     expect(screen.queryByTestId('intent-show-toggle')).not.toBeInTheDocument();
   });
 
-  it('shows API cap notice when exactly 100 intents are loaded', async () => {
+  it('lists every loaded intent past 100 without a partial notice', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(100));
+    listAll.mockResolvedValue(loaded(makeIntents(150)));
     renderProject();
     await screen.findByText('Intent 0');
-    expect(screen.getByTestId('intent-api-cap-notice')).toHaveTextContent(
-      'Up to 100 most recent Intents are loaded in this view.',
+    expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (150)');
+    expect(screen.queryByTestId('intent-list-partial-notice')).not.toBeInTheDocument();
+  });
+
+  it('shows the first page while later pages are still loading', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    listAll.mockImplementation((_projectId: string, onPage: (intents: unknown[]) => void) => {
+      onPage(makeIntents(50));
+      return new Promise(() => {});
+    });
+    renderProject();
+    expect(await screen.findByText('Intent 0')).toBeInTheDocument();
+    expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (50)');
+  });
+
+  it('keeps the intents read when a later page fails, and says the list is partial', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    listAll.mockResolvedValue(loaded(makeIntents(50), 'error'));
+    renderProject();
+    await screen.findByText('Intent 0');
+    expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (50)');
+    expect(screen.getByTestId('intent-list-partial-notice')).toHaveTextContent(
+      'Showing 50 Intents. The rest of the list could not be loaded; refresh to try again.',
     );
   });
 
-  it('does not show API cap notice when fewer than 100 intents are loaded', async () => {
+  it('says the list stops at the page cap', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
-    list.mockResolvedValue(makeIntents(50));
+    listAll.mockResolvedValue(loaded(makeIntents(1000), 'cap'));
     renderProject();
     await screen.findByText('Intent 0');
-    expect(screen.queryByTestId('intent-api-cap-notice')).not.toBeInTheDocument();
+    expect(screen.getByTestId('intent-list-partial-notice')).toHaveTextContent(
+      'Showing the first 1000 Intents of this Space.',
+    );
+  });
+
+  it('shows the error when the first page fails', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    listAll.mockRejectedValue(new Error('Request failed (500)'));
+    renderProject();
+    expect(await screen.findByText('Request failed (500)')).toBeInTheDocument();
+    expect(screen.queryByTestId('intent-list-partial-notice')).not.toBeInTheDocument();
   });
 });
 
 describe('Project page — Space-scoped usage (coreOnly)', () => {
   beforeEach(() => {
     useProjectCache.mockReset();
-    list.mockReset().mockResolvedValue([]);
+    listAll.mockReset().mockResolvedValue(loaded([]));
     clearIntentsCacheForTests();
   });
 

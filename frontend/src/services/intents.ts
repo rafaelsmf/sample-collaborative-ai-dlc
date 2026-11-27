@@ -1212,9 +1212,55 @@ export interface IntentAudit {
   advisories: IntentAuditAdvisory[];
 }
 
+export interface IntentPage {
+  items: Intent[];
+  nextToken: string | null;
+}
+
+/** Pages read before listAll stops (50 intents each). */
+export const INTENT_LIST_MAX_PAGES = 20;
+
+export interface IntentListResult {
+  intents: Intent[];
+  /** Why the list stopped before the last page: the page cap, or a failed later page. */
+  truncated: 'cap' | 'error' | null;
+}
+
 export const intentsService = {
   list: (projectId: string, status?: IntentStatus) =>
     api.get<Intent[]>(`/projects/${projectId}/intents${status ? `?status=${status}` : ''}`),
+  listPage: (projectId: string, nextToken?: string | null) =>
+    api.get<IntentPage>(
+      `/projects/${projectId}/intents?paged=1${
+        nextToken ? `&nextToken=${encodeURIComponent(nextToken)}` : ''
+      }`,
+    ),
+  // Reads the Space's intents page by page, reporting each step through
+  // onPage so the first page shows at once. A failed first page rejects; a
+  // failed later page keeps what was read. An intent whose status changed
+  // between pages can come back twice: the later copy wins.
+  listAll: async (
+    projectId: string,
+    onPage?: (intents: Intent[]) => void,
+    maxPages = INTENT_LIST_MAX_PAGES,
+  ): Promise<IntentListResult> => {
+    const byId = new Map<string, Intent>();
+    let nextToken: string | null = null;
+    for (let read = 0; read < maxPages; read++) {
+      let page: IntentPage;
+      try {
+        page = await intentsService.listPage(projectId, nextToken);
+      } catch (e) {
+        if (read === 0) throw e;
+        return { intents: [...byId.values()], truncated: 'error' };
+      }
+      for (const intent of page.items) byId.set(intent.id, intent);
+      nextToken = page.nextToken;
+      if (!nextToken) return { intents: [...byId.values()], truncated: null };
+      onPage?.([...byId.values()]);
+    }
+    return { intents: [...byId.values()], truncated: 'cap' };
+  },
   // Artifact bodies are paged separately (artifactContents).
   get: (projectId: string, intentId: string) =>
     api.get<IntentDetail>(`/projects/${projectId}/intents/${intentId}?artifactContent=separate`),
