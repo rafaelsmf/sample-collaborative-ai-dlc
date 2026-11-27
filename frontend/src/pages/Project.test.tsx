@@ -253,6 +253,41 @@ describe('Project page — Intent list scalability', () => {
     expect(screen.queryByText('First space intent')).not.toBeInTheDocument();
   });
 
+  it('shows the destination Space list, not the previous one, when switching Spaces', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    const named = (title: string) => [{ ...makeIntents(1)[0], id: title, title }];
+    function SwitchSpace() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button onClick={() => navigate('/space/p1')}>to p1</button>
+          <button onClick={() => navigate('/space/p2')}>to p2</button>
+        </>
+      );
+    }
+    // Both Spaces have a cached full list; the second read of p2 ends partial.
+    listAll
+      .mockResolvedValueOnce(loaded(named('P2 intent')))
+      .mockResolvedValueOnce(loaded(named('P1 intent')))
+      .mockResolvedValueOnce(loaded([], 'error'));
+    render(
+      <MemoryRouter initialEntries={['/space/p2']}>
+        <SwitchSpace />
+        <Routes>
+          <Route path="/space/:projectId" element={<Project />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('P2 intent');
+    await userEvent.click(screen.getByText('to p1'));
+    await screen.findByText('P1 intent');
+    await userEvent.click(screen.getByText('to p2'));
+    expect(await screen.findByText('P2 intent')).toBeInTheDocument();
+    await waitFor(() => expect(listAll).toHaveBeenCalledTimes(3));
+    await screen.findByTestId('intent-list-partial-notice');
+    expect(screen.queryByText('P1 intent')).not.toBeInTheDocument();
+  });
+
   it('shows the error when the first page fails', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
     listAll.mockRejectedValue(new Error('Request failed (500)'));

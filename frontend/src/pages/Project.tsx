@@ -118,7 +118,10 @@ export default function Project() {
   // v2 projects run intents (dynamic phases/stages), not the fixed sprint
   // lifecycle — render the dedicated intents view.
   if (project.kind === 'v2') {
-    return <IntentsView project={project} projectId={projectId} onNavigate={navigate} />;
+    // Keyed by Space: its list, cache seed and partial-read notice are per Space.
+    return (
+      <IntentsView key={projectId} project={project} projectId={projectId} onNavigate={navigate} />
+    );
   }
 
   return (
