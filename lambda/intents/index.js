@@ -1,6 +1,7 @@
 import { spacePermissions, VIEWER_DENIED } from '../shared/space-permissions.js';
 import { reconcileYjsDeletion } from '../shared/yjs-revocation.js';
 import { validateSparseCheckout } from '../shared/sparse-checkout.js';
+import { mergedUnitPrDelivered } from '../shared/unit-pr-delivery.js';
 import gremlin from 'gremlin';
 import { PartitionStrategy } from 'gremlin/lib/process/traversal-strategy.js';
 import { createHash, randomUUID, randomBytes } from 'node:crypto';
@@ -2233,6 +2234,7 @@ const handleExportIntent = async ({ event, body, projectId, intentId, g, respons
   if (incompatibleBlocks.length > 0) {
     return response(409, {
       error: 'The workflow uses edited methodology blocks that cannot yet be exported',
+      code: 'export_edited_blocks',
       incompatibleBlocks,
     });
   }
@@ -2325,6 +2327,7 @@ const handleExportIntent = async ({ event, body, projectId, intentId, g, respons
       ],
       omitStagesNotInDistribution: exportSource.omitStagesNotInDistribution,
       preloadedDistribution: exportSource.preloadedDistribution,
+      frontmatterProfile: exportSource.frontmatterProfile,
       projection,
       sourceCheckpoint: checkpoint
         ? {
@@ -2416,6 +2419,7 @@ const handleExportIntent = async ({ event, body, projectId, intentId, g, respons
     if (String(error.message ?? '').startsWith('native-export:')) {
       return response(409, {
         error: 'This workflow snapshot is not compatible with native AI-DLC export',
+        code: 'export_snapshot_incompatible',
         detail: error.message,
       });
     }
@@ -5178,8 +5182,9 @@ const handleRepairIntent = async ({ event, projectId, intentId, auth, g, respons
   if (sourceControlBlocked) return sourceControlBlocked;
 
   // Reconcile provider truth before retiring the old execution. A merged PR
-  // is accepted only when the exact reviewed head is reachable from the
-  // intent branch; open drafts are retained for the resumed lane.
+  // is accepted only when the exact reviewed head, or the merge result of a
+  // squash or rebase merge of it, is reachable from the intent branch; open
+  // drafts are retained for the resumed lane.
   const repairPrs = (records.unitPrs ?? []).filter(
     (pr) => Number(pr.sectionIndex) === sectionIndex && repairSlugs.includes(pr.unitSlug),
   );
@@ -5199,25 +5204,25 @@ const handleRepairIntent = async ({ event, projectId, intentId, auth, g, respons
       if (!status?.state) {
         throw new Error(`${pr.repository}#${pr.number}: provider status unavailable`);
       }
-      let mergedHeadIsAncestor = null;
+      let mergedHeadDelivered = null;
       if (status.state === 'merged') {
-        const reviewedHead = pr.readyHeadSha ?? pr.headSha ?? status.headSha;
-        mergedHeadIsAncestor =
-          Boolean(reviewedHead) &&
-          Boolean(
-            await sourceControlOperation({
-              projectId,
-              provider,
-              repo: pr.repository,
-              operation: 'is-ancestor',
-              args: {
-                ancestorSha: reviewedHead,
-                descendantRef: pr.targetBranch ?? meta.branch,
-              },
-            }),
-          );
+        mergedHeadDelivered = await mergedUnitPrDelivered({
+          acceptedHeadSha: pr.readyHeadSha ?? pr.headSha ?? status.headSha,
+          status,
+          targetRef: pr.targetBranch ?? meta.branch,
+          isAncestor: async (ancestorSha, descendantRef) =>
+            Boolean(
+              await sourceControlOperation({
+                projectId,
+                provider,
+                repo: pr.repository,
+                operation: 'is-ancestor',
+                args: { ancestorSha, descendantRef },
+              }),
+            ),
+        });
       }
-      remotePrs.set(pr.sk, { status, mergedHeadIsAncestor });
+      remotePrs.set(pr.sk, { status, mergedHeadDelivered });
     }
   } catch (error) {
     logger.error('Repair provider reconciliation failed', error);
@@ -5388,8 +5393,8 @@ const handleRepairIntent = async ({ event, projectId, intentId, auth, g, respons
     let state;
     let repositoryOutcome = null;
     if (status.state === 'merged') {
-      state = remote.mergedHeadIsAncestor ? 'MERGED' : 'FAILED';
-      repositoryOutcome = remote.mergedHeadIsAncestor ? 'merged' : 'ready_head_not_on_intent';
+      state = remote.mergedHeadDelivered ? 'MERGED' : 'FAILED';
+      repositoryOutcome = remote.mergedHeadDelivered ? 'merged' : 'ready_head_not_on_intent';
     } else if (status.state === 'closed') {
       state = 'CLOSED';
       repositoryOutcome = 'closed_without_merge';
