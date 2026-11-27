@@ -84,9 +84,15 @@ const listNewReleases = async ({ github, profiles }) => {
     .toSorted((left, right) => compareVersions(versionOfTag(left.tag), versionOfTag(right.tag)));
 };
 
+const ASSET_RE = /^[A-Za-z0-9._-]{1,100}$/;
+
 const releaseSummary = (release) => ({
   tag: release.tag_name,
   immutable: release.immutable === true,
+  assets: (Array.isArray(release.assets) ? release.assets : [])
+    .map((asset) => asset?.name)
+    .filter((name) => ASSET_RE.test(name ?? ''))
+    .toSorted(),
   publishedAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(release.published_at ?? '')
     ? release.published_at
     : null,
@@ -125,6 +131,19 @@ const changedCoreFiles = async ({ github, base, head }) => {
   return (comparison?.files ?? [])
     .map((file) => file?.filename)
     .filter((name) => typeof name === 'string' && name.startsWith('core/'))
+    .toSorted();
+};
+
+// The harness directories a commit ships under dist/, which the native export
+// of an official release reads.
+const distHarnesses = async ({ github, sha }) => {
+  const root = await github.request(`/git/trees/${sha}`);
+  const dist = root?.tree?.find((entry) => entry.path === 'dist' && entry.type === 'tree');
+  if (!SHA_RE.test(dist?.sha ?? '')) return [];
+  const tree = await github.request(`/git/trees/${dist.sha}`);
+  return (tree?.tree ?? [])
+    .filter((entry) => entry.type === 'tree' && ASSET_RE.test(entry.path ?? ''))
+    .map((entry) => entry.path)
     .toSorted();
 };
 
@@ -169,6 +188,7 @@ export {
   compareTreeWithArchive,
   compareVersions,
   coreTreeSha,
+  distHarnesses,
   gitBlobSha,
   githubClient,
   listNewReleases,

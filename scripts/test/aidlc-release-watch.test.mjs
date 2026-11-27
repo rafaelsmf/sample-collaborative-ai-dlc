@@ -1,25 +1,58 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { readFileSync } from 'node:fs';
+
+import { filesFromCompatibilityFixture } from '../../lambda/shared/aidlc-compatibility.js';
+import { AIDLC_COMPATIBILITY_PROFILES } from '../../lambda/shared/aidlc-compatibility-profiles.js';
+import { sourceDigestOf } from '../../lambda/shared/aidlc-source-integrity.js';
 import { parseArgs, watchReleases } from '../aidlc-release-watch/check.mjs';
+import {
+  commandFamily,
+  qualificationSections,
+  qualifyRelease,
+} from '../aidlc-release-watch/qualify.mjs';
 import { safePath } from '../aidlc-release-watch/report.mjs';
 import { WatchInfraError, gitBlobSha, githubClient } from '../aidlc-release-watch/source.mjs';
 
 const sha = (char) => char.repeat(40);
-const SUPPORTED = {
-  id: 'v2.11.5',
-  upstreamVersion: '2.11.5',
-  upstreamRef: sha('5'),
-  upstreamChannel: 'stable',
-};
-const PROFILES = [SUPPORTED];
+const text = (map) => new Map([...map].map(([path, content]) => [path, content.toString()]));
+// The newest supported version, certified as whatever tree a test serves for
+// its commit (the real digest names the unredacted upstream tree).
+const newestCertifiedAs = (files) => ({
+  ...AIDLC_COMPATIBILITY_PROFILES['v2.11.5'],
+  sourceDigest: sourceDigestOf(text(files)),
+});
 const NEW_SHA = sha('a');
 
+// A two-file tree for the source checks, which never get to import it.
 const coreFiles = () =>
   new Map([
     ['core/aidlc-common/stages/inception/a.md', Buffer.from('---\nslug: a\n---\nbody\n')],
     ['core/tools/run.sh', Buffer.from('#!/bin/sh\necho hi\n')],
   ]);
+
+// The 2.11.5 tree as its fixture records it, which this build imports.
+const releaseFiles = () =>
+  new Map(
+    [
+      ...filesFromCompatibilityFixture({
+        profileId: 'v2.11.5',
+        fixture: JSON.parse(
+          readFileSync(
+            new URL(
+              '../../lambda/shared/test/fixtures/aidlc-compatibility/v2.11.5.json',
+              import.meta.url,
+            ),
+            'utf8',
+          ),
+        ),
+      }),
+    ].map(([path, content]) => [path, Buffer.from(content)]),
+  );
+
+const SUPPORTED = newestCertifiedAs(coreFiles());
+const PROFILES = [SUPPORTED];
 
 // A fake upstream: releases, tags, and for each commit its core/ tree and the
 // archive codeload serves. `routes` overrides any API answer.
@@ -100,7 +133,8 @@ test('verifies a new release whose archive is the tree its tag names', async () 
   const { reports } = await run(upstream());
   assert.equal(reports.length, 1);
   const [report] = reports;
-  assert.equal(report.verdict, 'verified');
+  assert.ok(report.checks.every(({ ok }) => ok));
+  assert.equal(report.verdict, 'needs-work', 'a two-file tree is not an importable release');
   assert.equal(report.sha, NEW_SHA);
   assert.equal(report.files.size, 2);
   assert.equal(report.title, 'AI-DLC 2.12.0: release qualification report');
@@ -109,7 +143,7 @@ test('verifies a new release whose archive is the tree its tag names', async () 
     report.body,
     /✅ \*\*tree\*\*: every archive file is the git blob the commit's tree names \(2 files\)/,
   );
-  assert.match(report.body, /Verdict: `verified`/);
+  assert.match(report.body, /Verdict: `needs-work`/);
 });
 
 test('peels an annotated tag to its commit', async () => {
@@ -124,7 +158,7 @@ test('peels an annotated tag to its commit', async () => {
     }),
   );
   assert.equal(reports[0].sha, NEW_SHA);
-  assert.equal(reports[0].verdict, 'verified');
+  assert.ok(reports[0].checks.every(({ ok }) => ok));
 });
 
 test('fails integrity when the archive holds other bytes, or files the tree does not', async () => {
@@ -329,4 +363,156 @@ test('accepts only a plain version tag and an output directory', () => {
   for (const argv of [['--tag', 'main'], ['--tag', 'v2.12.0;rm'], ['--other']]) {
     assert.throws(() => parseArgs(argv), /usage: check\.mjs/);
   }
+});
+
+// The 2.11.5 requirements-analysis `outputs` value is invalid YAML that only
+// the per-version normalization repairs; a release that fixed it upstream.
+const REQUIREMENTS = 'core/aidlc-common/stages/inception/requirements-analysis.md';
+const quoteOutputs = (files) => {
+  const source = files.get(REQUIREMENTS).toString();
+  const fixed = source.replace(
+    /^outputs: (.*)$/m,
+    (_line, value) => `outputs: ${JSON.stringify(value)}`,
+  );
+  assert.notEqual(fixed, source);
+  files.set(REQUIREMENTS, Buffer.from(fixed));
+};
+
+const qualified = async (mutate = quoteOutputs) => {
+  const files = releaseFiles();
+  mutate(files);
+  const { reports } = await run(
+    upstream({
+      releases: [
+        {
+          tag_name: 'v2.12.0',
+          draft: false,
+          prerelease: false,
+          assets: [{ name: 'aidlc-runtime-2.12.0.tar.gz' }, { name: '<b>evil</b>' }],
+        },
+      ],
+      trees: { [NEW_SHA]: files, [SUPPORTED.upstreamRef]: releaseFiles() },
+    }),
+    { profiles: [newestCertifiedAs(releaseFiles())] },
+  );
+  return reports[0];
+};
+
+test('a release this build imports as committed, with no new gap, is ready', async () => {
+  const report = await qualified();
+  assert.equal(report.verdict, 'ready');
+  assert.equal(report.qualification.profile.baseProfileId, undefined);
+  assert.equal(report.qualification.profile.frontmatterDialect, SUPPORTED.frontmatterDialect);
+  assert.match(report.body, /Verdict: `ready`/);
+  assert.match(report.body, /✅ \*\*baseline\*\*/);
+  assert.match(report.body, /Importable: yes/);
+  assert.match(report.body, /0 not in 2\.11\.5/);
+  assert.match(report.body, /<summary>stages: 1 files<\/summary>/);
+  const files = releaseFiles();
+  quoteOutputs(files);
+  const digest = sourceDigestOf(text(files));
+  assert.equal(report.qualification.profile.sourceDigest, digest);
+  assert.ok(report.body.includes(`sourceDigest: '${digest}'`));
+  assert.doesNotMatch(report.body, /baseProfileId/);
+  assert.match(report.body, new RegExp(`releaseId: 'aidlc:${NEW_SHA}'`));
+  assert.match(report.body, /Release assets: `aidlc-runtime-2\.12\.0\.tar\.gz`$/m);
+  assert.match(report.body, /^- claude: \*\*no\*\*, the commit has no `dist\/claude\/`$/m);
+  assert.match(report.body, /^- kiro-ide: \*\*no\*\*/m);
+});
+
+test('a release that still needs a per-version normalization is not ready, and says which', async () => {
+  const report = await qualified(() => {});
+  assert.equal(report.verdict, 'needs-work');
+  assert.match(report.body, /Importable: \*\*no\*\*/);
+  assert.match(
+    report.body,
+    /Imports once `v2\.12\.0` joins the per-version import normalizations 2\.11\.5 gets/,
+  );
+});
+
+test('a baseline that is no longer its certified source stops the qualification', async () => {
+  const files = releaseFiles();
+  quoteOutputs(files);
+  const { reports } = await run(
+    upstream({ trees: { [NEW_SHA]: files, [SUPPORTED.upstreamRef]: releaseFiles() } }),
+    { profiles: [newestCertifiedAs(coreFiles())] },
+  );
+  assert.equal(reports[0].verdict, 'integrity-failed');
+  assert.equal(reports[0].qualification, undefined);
+  assert.match(
+    reports[0].body,
+    /❌ \*\*baseline\*\*: 2\.11\.5, the version this release is compared with, is no longer its certified source/,
+  );
+});
+
+const qualifyDirectly = (mutate) => {
+  const files = releaseFiles();
+  quoteOutputs(files);
+  mutate(files);
+  const qualification = qualifyRelease({
+    result: { version: '2.12.0', sha: NEW_SHA, files },
+    newest: SUPPORTED,
+    baselineFiles: releaseFiles(),
+  });
+  return { qualification, body: qualificationSections(qualification).flat().join('\n') };
+};
+
+test('a release whose stage no longer parses needs work and lists the change', () => {
+  const stage = 'core/aidlc-common/stages/inception/requirements-analysis.md';
+  const { qualification, body } = qualifyDirectly((files) => {
+    assert.ok(files.has(stage));
+    files.set(stage, Buffer.from('---\nslug: [broken\n---\n'));
+  });
+  assert.equal(qualification.verdict, 'needs-work');
+  assert.match(body, /Importable: \*\*no\*\*/);
+  assert.match(body, /diagnostics<\/summary>/);
+  assert.match(body, /<summary>stages: 1 files<\/summary>/);
+  assert.ok(body.includes(`changed ${stage}`));
+});
+
+test('a certification gap the newest version does not have holds a release back', () => {
+  const { qualification, body } = qualifyDirectly((files) => {
+    const stage = [...files.keys()].find((path) => path.startsWith('core/aidlc-common/stages/'));
+    files.set(
+      stage,
+      Buffer.from(`${files.get(stage)}\nRun \`{{INVOKE}} engine brand-new-command --x\`.\n`),
+    );
+  });
+  assert.equal(qualification.analysis.importable, true);
+  assert.equal(qualification.bundle.ok, true);
+  assert.equal(qualification.verdict, 'needs-work');
+  assert.ok(qualification.analysis.newGaps.some((gap) => gap.includes('engine brand-new-command')));
+  assert.match(body, /certification gaps not in 2\.11\.5<\/summary>/);
+  assert.deepEqual(qualification.commands.added, ['engine brand-new-command']);
+});
+
+test('lists runtime file changes first, for review before approval', () => {
+  const { body } = qualifyDirectly((files) => {
+    const tool = [...files.keys()].find((path) => path.startsWith('core/tools/'));
+    files.set(tool, Buffer.from(`${files.get(tool)}\n// changed\n`));
+    files.set('core/hooks/new-hook.sh', Buffer.from('#!/bin/sh\n'));
+    files.set('core/agents/new-agent.md', Buffer.from('x'));
+  });
+  const runtime = body.indexOf('<summary>runtime (tools, hooks, protocols, conductor): 2 files');
+  assert.ok(runtime > 0);
+  assert.ok(runtime < body.indexOf('<summary>agents: 1 files'));
+  assert.ok(body.includes('added   core/hooks/new-hook.sh'));
+});
+
+test('names engine command families by their command words', () => {
+  assert.equal(commandFamily('Run `{{INVOKE}} engine graph ars --iae <s>`'), 'engine graph ars');
+  assert.equal(commandFamily('{{INVOKE}} engine intent add-repo <url>'), 'engine intent add-repo');
+});
+
+test('an upstream line cannot close the code block it is shown in', () => {
+  const { qualification, body } = qualifyDirectly((files) => {
+    files.set('core/agents/evil.md', Buffer.from('{{INVOKE}} engine evil ```` \u0007@user\n'));
+  });
+  assert.deepEqual(qualification.commands.added, ['engine evil']);
+  const start = body.indexOf('`````text\n+ {{INVOKE}} engine evil ```` @user\n');
+  assert.ok(
+    start > 0,
+    'shown in a fence longer than its backtick run, without the control character',
+  );
+  assert.ok(body.indexOf('\n`````\n', start) > start, 'the same fence closes the block');
 });

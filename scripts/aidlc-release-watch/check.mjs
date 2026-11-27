@@ -13,13 +13,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { AIDLC_COMPATIBILITY_PROFILES } from '../../lambda/shared/aidlc-compatibility-profiles.js';
+import { sourceDigestOf } from '../../lambda/shared/aidlc-source-integrity.js';
 import { fetchRepoFiles } from '../../lambda/shared/repo-fetch.js';
+import { qualificationSections, qualifyRelease } from './qualify.mjs';
 import { renderReport } from './report.mjs';
 import {
   WatchInfraError,
   changedCoreFiles,
   compareTreeWithArchive,
   coreTreeSha,
+  distHarnesses,
   githubClient,
   listNewReleases,
   newestProfile,
@@ -145,6 +148,36 @@ const checkDrift = async ({ github, profiles }) => {
   return drift;
 };
 
+// The newest supported version's real tree, the baseline a release is
+// qualified against. It must still be the source its profile certified.
+const readBaseline = async ({ fetchFiles, newest }) => {
+  let files;
+  try {
+    files = await fetchFiles(newest.upstreamRef);
+  } catch (error) {
+    if (isTransientFetchError(error)) {
+      throw new WatchInfraError(
+        `the ${newest.upstreamVersion} archive could not be downloaded: ${error.message}`,
+      );
+    }
+    throw error;
+  }
+  const digest = sourceDigestOf(
+    new Map([...files].map(([name, content]) => [name, Buffer.from(content).toString('utf8')])),
+  );
+  const ok = digest === newest.sourceDigest;
+  return {
+    files: ok ? files : null,
+    check: check(
+      'baseline',
+      ok,
+      ok
+        ? `${newest.upstreamVersion}, the version this release is compared with, is still its certified source`
+        : `${newest.upstreamVersion}, the version this release is compared with, is no longer its certified source`,
+    ),
+  };
+};
+
 const watchReleases = async ({
   github,
   fetchFiles,
@@ -162,6 +195,7 @@ const watchReleases = async ({
     return { newest: newestProfile(profiles).upstreamVersion, reports: [] };
   const drift = await checkDrift({ github, profiles });
   const reports = [];
+  let baseline = null;
   for (const release of releases) {
     const result = release.missing
       ? {
@@ -173,7 +207,28 @@ const watchReleases = async ({
           verdict: 'integrity-failed',
         }
       : await checkRelease({ github, fetchFiles, profiles, release });
-    reports.push({ ...result, ...renderReport({ result, drift }) });
+    let sections = [];
+    if (result.verdict === 'verified') {
+      baseline ??= await readBaseline({ fetchFiles, newest: newestProfile(profiles) });
+      result.checks.push(baseline.check);
+    }
+    if (result.verdict === 'verified' && baseline.check.ok) {
+      const qualification = qualifyRelease({
+        result,
+        newest: newestProfile(profiles),
+        baselineFiles: baseline.files,
+        distribution: {
+          harnesses: await distHarnesses({ github, sha: result.sha }),
+          assets: release.assets ?? [],
+        },
+      });
+      result.verdict = qualification.verdict;
+      result.qualification = qualification;
+      sections = qualificationSections(qualification);
+    } else if (result.verdict === 'verified') {
+      result.verdict = 'integrity-failed';
+    }
+    reports.push({ ...result, ...renderReport({ result, drift, sections }) });
   }
   return { newest: newestProfile(profiles).upstreamVersion, reports };
 };
