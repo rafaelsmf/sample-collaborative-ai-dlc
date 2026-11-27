@@ -133,6 +133,7 @@ import {
   customProfile,
   profileFor,
 } from '../shared/aidlc-compatibility-profiles.js';
+import { assertOfficialSource } from '../shared/aidlc-source-integrity.js';
 import { normalizeAidlcFrontmatter } from '../shared/aidlc-compatibility.js';
 import { parseFrontmatterStrict } from '../shared/frontmatter.js';
 import {
@@ -570,6 +571,9 @@ const importRelease = async ({ event, dryRun, reseed }) => {
   const { files, distributionFiles } = source
     ? await fetchCustomReleaseFiles({ profile, source })
     : { files: await fetchCoreFiles(profile.upstreamRef), distributionFiles: new Map() };
+  // An official release loads only the core/ tree its profile was certified
+  // from; a mismatch fails here, in a dry run too, before anything is written.
+  if (!source) assertOfficialSource({ profile, files });
   const distributionPlan = planReleaseDistributions(distributionFiles);
   const bundle = buildReleaseBundle({ profile, files });
   const { manifest, objects } = bundle;
