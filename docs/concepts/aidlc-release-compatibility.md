@@ -40,6 +40,21 @@ every existing profile: changing a profile that installations already import
 fails that test, and a newer AI-DLC version is added as a new candidate
 profile instead.
 
+Before an official release is built, the import computes the same digest over
+the files it fetched and refuses with `release_source_mismatch` when it differs,
+in a dry run too, so nothing is published or registered from a tree other than
+the certified one. The check runs whenever the closure is built, which is the
+first preparation of a version, an importer revision bump (which rebuilds every
+version) and any rebuild after a published object fails verification; a
+closure already published, including one published before this check
+existed, is not fetched again. Deployment keeps preparing the other versions
+and then fails with exit code 3, naming each refused one; retrying is safe. The digest ties the loaded files to what this build certified
+(it catches a download, cache or proxy that serves other bytes for the commit);
+it does not vouch for upstream content that was already wrong when it was
+certified. Custom forks have no certified source and are not checked, and
+neither are the baseline seed of an arbitrary `AIDLC_REPO_REF` nor catalogs
+rebuilt for legacy intents.
+
 A custom fork names the official profile whose frontmatter dialect it uses (for
 example `v2.9.0`); that base grants no trust. It is recorded `T0` and
 import-only, and it may author its own stages, scopes, agents and sensors. It
