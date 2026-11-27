@@ -11,6 +11,7 @@ vi.mock('@/hooks/useProjectsCache', () => ({
 }));
 vi.mock('@/hooks/useSprintEvents', () => ({ useSprintEvents: () => {} }));
 const listAll = vi.fn();
+const deleteIntent = vi.fn();
 const loaded = (intents: unknown[], truncated: 'cap' | 'error' | null = null) => ({
   intents,
   truncated,
@@ -22,6 +23,7 @@ const projectMetrics = vi.fn().mockResolvedValue({
 vi.mock('@/services/intents', () => ({
   intentsService: {
     listAll: (...a: unknown[]) => listAll(...a),
+    delete: (...a: unknown[]) => deleteIntent(...a),
     projectMetrics: (...a: unknown[]) => projectMetrics(...a),
   },
 }));
@@ -224,33 +226,32 @@ describe('Project page — Intent list scalability', () => {
     expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (150)');
   });
 
-  it('ignores an older refresh that finishes after a newer one', async () => {
+  it('ignores the mount read when a delete refresh finishes first', async () => {
     useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    const named = (...titles: string[]) =>
+      titles.map((title) => ({ ...makeIntents(1)[0], id: title, title }));
     const pending: ((value: unknown) => void)[] = [];
-    listAll.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
-    function SwitchSpace() {
-      const navigate = useNavigate();
-      return <button onClick={() => navigate('/space/p2')}>switch space</button>;
-    }
-    render(
-      <MemoryRouter initialEntries={['/space/p1']}>
-        <SwitchSpace />
-        <Routes>
-          <Route path="/space/:projectId" element={<Project />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-    await waitFor(() => expect(pending).toHaveLength(1));
-    await userEvent.click(screen.getByText('switch space'));
-    await waitFor(() => expect(pending).toHaveLength(2));
-    expect(listAll.mock.calls.map((c) => c[0])).toEqual(['p1', 'p2']);
+    // The mount read shows its first page, then waits on a later page.
+    listAll.mockImplementationOnce((_projectId: string, onPage?: (i: unknown[]) => void) => {
+      onPage?.(named('Kept intent', 'Deleted intent'));
+      return new Promise((resolve) => pending.push(resolve));
+    });
+    listAll.mockImplementationOnce(() => new Promise((resolve) => pending.push(resolve)));
+    deleteIntent.mockResolvedValue(undefined);
+    renderProject();
+    await screen.findByText('Deleted intent');
 
-    const named = (title: string) => [{ ...makeIntents(1)[0], id: title, title }];
-    pending[1](loaded(named('Second space intent')));
-    expect(await screen.findByText('Second space intent')).toBeInTheDocument();
-    pending[0](loaded(named('First space intent')));
-    await waitFor(() => expect(screen.getByText('Second space intent')).toBeInTheDocument());
-    expect(screen.queryByText('First space intent')).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete intent' })[1]);
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete Intent' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(deleteIntent).toHaveBeenCalledWith('p1', 'Deleted intent');
+
+    pending[1](loaded(named('Kept intent')));
+    await waitFor(() => expect(screen.queryByText('Deleted intent')).not.toBeInTheDocument());
+    // The older read ends last, with the intent that was deleted meanwhile.
+    pending[0](loaded(named('Kept intent', 'Deleted intent')));
+    await waitFor(() => expect(screen.getByText('Kept intent')).toBeInTheDocument());
+    expect(screen.queryByText('Deleted intent')).not.toBeInTheDocument();
   });
 
   it('shows the destination Space list, not the previous one, when switching Spaces', async () => {
