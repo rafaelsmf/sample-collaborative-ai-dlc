@@ -283,13 +283,17 @@ test('reports a supported version whose tag now names other core/ content', asyn
         [`/git/trees/${promoted}`]: () => ({
           tree: [{ path: 'core', type: 'tree', sha: sha('e') }],
         }),
+        [`/compare/${SUPPORTED.upstreamRef}...${promoted}`]: () => ({
+          files: [{ filename: 'CHANGELOG.md' }, { filename: 'core/tools/aidlc-version.ts' }],
+        }),
       },
     }),
   );
   assert.match(otherCore.reports[0].body, /tag now names other core\/ content/);
-  assert.match(
-    otherCore.reports[0].body,
-    new RegExp(`- 2\\.11\\.5: the tag names \`${promoted}\``),
+  assert.ok(
+    otherCore.reports[0].body.includes(
+      `- 2.11.5: the tag names \`${promoted}\`, which changes \`core/tools/aidlc-version.ts\``,
+    ),
   );
 });
 

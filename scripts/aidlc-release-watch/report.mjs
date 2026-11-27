@@ -69,10 +69,15 @@ const driftLines = (drift) =>
         '',
         'Installations keep loading the pinned commit; review whether upstream re-tagged these versions.',
         '',
-        ...drift.map(
-          ({ version, tagSha }) =>
-            `- ${version}: the tag names ${tagSha ? `\`${tagSha}\`` : 'no commit'}`,
-        ),
+        ...drift.map(({ version, tagSha, changed = [] }) => {
+          const files = changed.length
+            ? `, which changes ${changed
+                .slice(0, 10)
+                .map((name) => `\`${safePath(name)}\``)
+                .join(', ')}${changed.length > 10 ? ` and ${changed.length - 10} more` : ''}`
+            : '';
+          return `- ${version}: the tag names ${tagSha ? `\`${tagSha}\`` : 'no commit'}${files}`;
+        }),
       ];
 
 const renderReport = ({ result, drift = [], sections = [] }) => {

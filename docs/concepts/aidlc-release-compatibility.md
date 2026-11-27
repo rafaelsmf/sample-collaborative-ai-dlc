@@ -495,11 +495,15 @@ missing or added; and the tag still names the same commit at the end. A
 release that fails any of them is reported `integrity-failed`, one that passes
 `verified`, and a commit that is already a profile `already-supported`. The
 report also lists supported versions whose tag now names a commit with
-different `core/` content than the one their profile pins (2.11.3's tag names
-the promotion commit, whose `core/` tree is the pinned preview's, so it is not
-listed). The report is evidence for a maintainer: the script never changes code,
-the release registry, channels or a deployment, and a new version still needs
-a reviewed pull request that adds its profile. GitHub or codeload being
+different `core/` content than the one their profile pins, with the `core/`
+files that differ: 2.11.3 is listed because its tag names the promotion commit,
+which changes the version string in `core/tools/aidlc-version.ts`. The tag,
+the tree and the archive all come from GitHub, so the checks show that they
+agree for one commit and that the tag did not move during the run; they do
+not prove who wrote the release, which is what the maintainer's review is for.
+The report is evidence for a maintainer: the script never changes code, the
+release registry, channels or a deployment, and a new version still needs a
+reviewed pull request that adds its profile. GitHub or codeload being
 unavailable fails the run without a report.
 
 ## Registry, promotion, and channels

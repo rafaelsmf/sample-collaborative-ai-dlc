@@ -17,6 +17,7 @@ import { fetchRepoFiles } from '../../lambda/shared/repo-fetch.js';
 import { renderReport } from './report.mjs';
 import {
   WatchInfraError,
+  changedCoreFiles,
   compareTreeWithArchive,
   coreTreeSha,
   githubClient,
@@ -134,7 +135,12 @@ const checkDrift = async ({ github, profiles }) => {
     if (sha === profile.upstreamRef) continue;
     const pinnedCore = await coreTreeSha({ github, sha: profile.upstreamRef });
     if (sha && pinnedCore && (await coreTreeSha({ github, sha })) === pinnedCore) continue;
-    drift.push({ profileId: profile.id, version: profile.upstreamVersion, tagSha: sha });
+    drift.push({
+      profileId: profile.id,
+      version: profile.upstreamVersion,
+      tagSha: sha,
+      changed: sha ? await changedCoreFiles({ github, base: profile.upstreamRef, head: sha }) : [],
+    });
   }
   return drift;
 };
