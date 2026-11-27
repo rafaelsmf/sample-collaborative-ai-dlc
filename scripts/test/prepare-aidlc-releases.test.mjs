@@ -120,3 +120,56 @@ test('reports a version kept on its older closure and still prepares the others'
   assert.equal(prepared.length, 9);
   assert.ok(!prepared.includes(kept.id));
 });
+
+const functionError = (errorMessage) => ({
+  StatusCode: 200,
+  FunctionError: 'Unhandled',
+  Payload: Buffer.from(JSON.stringify({ errorType: 'AidlcReleaseError', errorMessage })),
+});
+
+test('prepares the other versions when the source check refuses one, then fails', async () => {
+  const refused = profiles[1];
+  const reason = `release_source_mismatch: AI-DLC ${refused.upstreamVersion} at ${refused.upstreamRef.slice(0, 12)} fetched 1 core/ files`;
+  const calls = [];
+  const reported = [];
+  await assert.rejects(
+    prepareSupportedReleases({
+      invoke: async (event) => {
+        calls.push(event.profile);
+        return event.profile === refused.id
+          ? functionError(reason)
+          : responseFor(AIDLC_COMPATIBILITY_PROFILES[event.profile]);
+      },
+      onMismatch: (profile, message) => reported.push([profile.id, message]),
+    }),
+    (error) => {
+      assert.equal(error.code, 'release_source_mismatch');
+      assert.match(
+        error.message,
+        new RegExp(
+          `^AI-DLC ${refused.upstreamVersion.replaceAll('.', '\\.')} not prepared: the files fetched from upstream are not the ones this build certified`,
+        ),
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(
+    calls,
+    profiles.map((profile) => profile.id),
+  );
+  assert.deepEqual(reported, [[refused.id, reason]]);
+});
+
+test('names the Lambda error of any other failure and still stops at it', async () => {
+  let calls = 0;
+  await assert.rejects(
+    prepareSupportedReleases({
+      invoke: async () => {
+        calls += 1;
+        return functionError('release_import_rejected: stage frontmatter does not parse');
+      },
+    }),
+    /2\.3\.3 preparation failed: release_import_rejected: stage frontmatter does not parse\. Check the seed Lambda logs\./,
+  );
+  assert.equal(calls, 1);
+});

@@ -388,6 +388,11 @@ echo "Preparing supported AI-DLC versions..."
 PREPARE_STATUS=0
 AWS_REGION="$INVENTORY_REGION" SEED_BLOCKS_FUNCTION="$(tf_output seed_blocks_lambda_name)" \
     node "$SCRIPT_DIR/prepare-aidlc-releases.mjs" || PREPARE_STATUS=$?
+if [[ "$PREPARE_STATUS" -eq 3 ]]; then
+    echo "Error: infrastructure is applied, but the AI-DLC versions named above were not prepared: the files fetched from upstream are not the ones this build certified." >&2
+    echo "Nothing was published or registered for them, and the other versions were prepared. Retrying is safe; if it keeps failing, report it to the project maintainers." >&2
+    exit "$PREPARE_STATUS"
+fi
 if [[ "$PREPARE_STATUS" -ne 0 ]]; then
     echo "Error: infrastructure is applied and the baseline step finished, but AI-DLC version preparation failed." >&2
     echo "Retry it with: AWS_REGION=$INVENTORY_REGION SEED_BLOCKS_FUNCTION=$(tf_output seed_blocks_lambda_name) node scripts/prepare-aidlc-releases.mjs" >&2
