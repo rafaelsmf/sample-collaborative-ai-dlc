@@ -27,6 +27,10 @@ const VERDICTS = {
     'The source of this release could not be verified. Do not onboard it until the failed checks are understood.',
   verified:
     "The archive of this release is the commit's git tree as GitHub lists it. The platform does not offer it until a reviewed pull request adds its profile.",
+  ready:
+    "The archive is the commit's git tree, and this build imports the release with no diagnostic and no certification gap the newest supported version does not already have. The platform does not offer it until a reviewed pull request adds its profile.",
+  'needs-work':
+    "The archive is the commit's git tree, but this build cannot import or certify the release as it is; see the qualification below before onboarding it.",
   'already-supported': 'This commit is already a supported profile; nothing to onboard.',
 };
 
