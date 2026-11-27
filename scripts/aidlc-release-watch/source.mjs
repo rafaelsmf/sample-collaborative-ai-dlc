@@ -119,6 +119,15 @@ const coreTreeSha = async ({ github, sha }) => {
   return SHA_RE.test(core?.sha ?? '') ? core.sha : null;
 };
 
+// The core/ files that differ between two commits, from the compare API.
+const changedCoreFiles = async ({ github, base, head }) => {
+  const comparison = await github.request(`/compare/${base}...${head}`);
+  return (comparison?.files ?? [])
+    .map((file) => file?.filename)
+    .filter((name) => typeof name === 'string' && name.startsWith('core/'))
+    .toSorted();
+};
+
 const readCoreTree = async ({ github, sha }) => {
   const coreSha = await coreTreeSha({ github, sha });
   if (!coreSha) return { error: 'the commit has no core/ tree' };
@@ -156,6 +165,7 @@ export {
   REPOSITORY,
   SHA_RE,
   WatchInfraError,
+  changedCoreFiles,
   compareTreeWithArchive,
   compareVersions,
   coreTreeSha,
