@@ -42,6 +42,16 @@ asset: the commit stays the identity, and the export refuses a release whose
 `v2.11.3-preview.20261103.1`, the release built from its commit; the later
 `v2.11.3` tag is a different commit.
 
+Each official profile also records a source digest: the SHA-256 of the
+canonical map from every `core/` path to the SHA-256 of its content, taken from
+the same download the compatibility fixture was generated from (the fixture
+keeps that map as `originalFileHashes`, and
+`scripts/snapshot-aidlc-compatibility.mjs` prints the digest). A test checks
+each profile's digest against its fixture and pins the published fields of
+every existing profile: changing a profile that installations already import
+fails that test, and a newer AI-DLC version is added as a new candidate
+profile instead.
+
 A custom fork names the official profile whose frontmatter dialect it uses (for
 example `v2.9.0`); that base grants no trust. It is recorded `T0` and
 import-only, and it may author its own stages, scopes, agents and sensors. It
