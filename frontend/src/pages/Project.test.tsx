@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route } from 'react-router';
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router';
 
 const useProjectCache = vi.fn();
 vi.mock('@/hooks/useProjectsCache', () => ({
@@ -180,7 +180,7 @@ describe('Project page — Intent list scalability', () => {
     await screen.findByText('Intent 0');
     expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (50)');
     expect(screen.getByTestId('intent-list-partial-notice')).toHaveTextContent(
-      'Showing 50 Intents. The rest of the list could not be loaded; refresh to try again.',
+      'Showing 50 Intents. The full list could not be loaded; refresh to try again.',
     );
   });
 
@@ -192,6 +192,65 @@ describe('Project page — Intent list scalability', () => {
     expect(screen.getByTestId('intent-list-partial-notice')).toHaveTextContent(
       'Showing the first 1000 Intents of this Space.',
     );
+  });
+
+  it('does not cache a partial read, so the next visit reloads the list', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    listAll.mockResolvedValueOnce(loaded(makeIntents(50), 'error'));
+    const first = renderProject();
+    await screen.findByText('Intent 0');
+    first.unmount();
+
+    listAll.mockReturnValueOnce(new Promise(() => {}));
+    renderProject();
+    await waitFor(() => expect(listAll).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('Intent 0')).not.toBeInTheDocument();
+  });
+
+  it('keeps a full list on screen while a refresh reads its first page', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    listAll.mockResolvedValueOnce(loaded(makeIntents(150)));
+    const first = renderProject();
+    await screen.findByText('Intent 0');
+    first.unmount();
+
+    listAll.mockImplementationOnce((_projectId: string, onPage?: (i: unknown[]) => void) => {
+      onPage?.(makeIntents(50));
+      return new Promise(() => {});
+    });
+    renderProject();
+    await waitFor(() => expect(listAll).toHaveBeenCalledTimes(2));
+    expect(listAll.mock.calls[1][1]).toBeUndefined();
+    expect(screen.getByTestId('intent-show-toggle')).toHaveTextContent('Show all loaded (150)');
+  });
+
+  it('ignores an older refresh that finishes after a newer one', async () => {
+    useProjectCache.mockReturnValue({ project: V2_PROJECT, loading: false });
+    const pending: ((value: unknown) => void)[] = [];
+    listAll.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    function SwitchSpace() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate('/space/p2')}>switch space</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/space/p1']}>
+        <SwitchSpace />
+        <Routes>
+          <Route path="/space/:projectId" element={<Project />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(pending).toHaveLength(1));
+    await userEvent.click(screen.getByText('switch space'));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(listAll.mock.calls.map((c) => c[0])).toEqual(['p1', 'p2']);
+
+    const named = (title: string) => [{ ...makeIntents(1)[0], id: title, title }];
+    pending[1](loaded(named('Second space intent')));
+    expect(await screen.findByText('Second space intent')).toBeInTheDocument();
+    pending[0](loaded(named('First space intent')));
+    await waitFor(() => expect(screen.getByText('Second space intent')).toBeInTheDocument());
+    expect(screen.queryByText('First space intent')).not.toBeInTheDocument();
   });
 
   it('shows the error when the first page fails', async () => {

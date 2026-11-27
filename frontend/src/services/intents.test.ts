@@ -93,11 +93,37 @@ describe('intentsService request paths', () => {
     });
 
     it('keeps what it read when a later page fails', async () => {
+      vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
       get.mockResolvedValueOnce(page(['a'], 't1')).mockRejectedValueOnce(new Error('timeout'));
       expect(await intentsService.listAll('p1')).toEqual({
         intents: [intent('a')],
         truncated: 'error',
       });
+    });
+
+    it('accepts the legacy array from a backend without the paged route', async () => {
+      get.mockResolvedValueOnce([intent('a'), intent('b')]);
+      const seen: string[][] = [];
+      const result = await intentsService.listAll('p1', (partial) =>
+        seen.push(partial.map((i) => i.id)),
+      );
+      expect(result).toEqual({ intents: [intent('a'), intent('b')], truncated: null });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(seen).toEqual([]);
+    });
+
+    it('logs a failed later page with its index and status, without the token', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      get
+        .mockResolvedValueOnce(page(['a'], 'secret-token'))
+        .mockRejectedValueOnce(Object.assign(new Error('Service Unavailable'), { status: 503 }));
+      await intentsService.listAll('p1');
+      expect(warn).toHaveBeenCalledWith('Intent list page failed; keeping the pages already read', {
+        page: 2,
+        status: 503,
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-token');
+      warn.mockRestore();
     });
 
     it('rejects when the first page fails', async () => {

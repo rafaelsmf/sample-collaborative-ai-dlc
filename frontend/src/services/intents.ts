@@ -1230,7 +1230,7 @@ export const intentsService = {
   list: (projectId: string, status?: IntentStatus) =>
     api.get<Intent[]>(`/projects/${projectId}/intents${status ? `?status=${status}` : ''}`),
   listPage: (projectId: string, nextToken?: string | null) =>
-    api.get<IntentPage>(
+    api.get<IntentPage | Intent[]>(
       `/projects/${projectId}/intents?paged=1${
         nextToken ? `&nextToken=${encodeURIComponent(nextToken)}` : ''
       }`,
@@ -1247,12 +1247,21 @@ export const intentsService = {
     const byId = new Map<string, Intent>();
     let nextToken: string | null = null;
     for (let read = 0; read < maxPages; read++) {
-      let page: IntentPage;
+      let page: IntentPage | Intent[];
       try {
         page = await intentsService.listPage(projectId, nextToken);
       } catch (e) {
         if (read === 0) throw e;
+        console.warn('Intent list page failed; keeping the pages already read', {
+          page: read + 1,
+          status: (e as { status?: number } | null)?.status ?? null,
+        });
         return { intents: [...byId.values()], truncated: 'error' };
+      }
+      // A rolled-back backend still answers with the legacy array.
+      if (Array.isArray(page)) {
+        for (const intent of page) byId.set(intent.id, intent);
+        return { intents: [...byId.values()], truncated: null };
       }
       for (const intent of page.items) byId.set(intent.id, intent);
       nextToken = page.nextToken;

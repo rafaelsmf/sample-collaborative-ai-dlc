@@ -441,16 +441,26 @@ function IntentsView({
 
   const refresh = useCallback(() => {
     const load = ++listLoad.current;
+    // A list already on screen stays until the refresh finishes: showing the
+    // first page meanwhile would shrink it.
+    const shown = intentsCache.has(projectId);
+    const showPage = (partial: Intent[]) => {
+      if (load !== listLoad.current) return;
+      setIntents(partial);
+      setLoading(false);
+    };
     intentsService
-      .listAll(projectId, (partial) => {
-        if (load !== listLoad.current) return;
-        setIntents(partial);
-        setLoading(false);
-      })
+      .listAll(projectId, shown ? undefined : showPage)
       .then(({ intents: data, truncated }) => {
         if (load !== listLoad.current) return;
-        setIntents(data);
         setListTruncated(truncated);
+        // A partial read is shown (unless a full list is already on screen)
+        // but never cached, so it does not replace a complete list later.
+        if (truncated === 'error') {
+          if (!shown) setIntents(data);
+          return;
+        }
+        setIntents(data);
         const entry: IntentsCacheEntry = {
           intents: data,
           usage: intentsCache.get(projectId)?.usage ?? null,
@@ -712,7 +722,7 @@ function IntentsView({
                 >
                   {listTruncated === 'cap'
                     ? `Showing the first ${intents.length} Intents of this Space.`
-                    : `Showing ${intents.length} Intents. The rest of the list could not be loaded; refresh to try again.`}
+                    : `Showing ${intents.length} Intents. The full list could not be loaded; refresh to try again.`}
                 </p>
               )}
             </>
